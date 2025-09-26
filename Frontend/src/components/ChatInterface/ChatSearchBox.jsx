@@ -1,78 +1,192 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Paperclip, BookOpen, ChevronDown, Loader2, Send, FileCheck } from 'lucide-react';
+import { Paperclip, BookOpen, ChevronDown, Loader2, Send, FileCheck, AlertCircle, X, CheckCircle } from 'lucide-react';
 import ApiService from '../../services/api'; // Adjust path as needed
 
-const ChatSearchBox = ({
-  fileId, setFileId,
-  sessionId, setSessionId,
-  isUploading, setIsUploading,
-  uploadProgress, setUploadProgress,
-  processingStatus, setProcessingStatus,
-  isLoading, setIsLoading,
-  isGeneratingInsights, setIsGeneratingInsights,
-  error, setError,
-  success, setSuccess,
-  activeDropdown, setActiveDropdown,
-  showDropdown, setShowDropdown,
-  secrets, setSecrets,
-  isLoadingSecrets, setIsLoadingSecrets,
-  selectedSecretId, setSelectedSecretId,
-  isSecretPromptSelected, setIsSecretPromptSelected,
-  chatInput, setChatInput,
-  documentData, setDocumentData,
-  batchUploads, setBatchUploads,
-  messages, setMessages,
-  animateResponse, // Passed from parent
-  API_BASE_URL, getAuthToken, apiRequest,
-  fetchSecrets, fetchSecretValue, startProcessingStatusPolling,
-  formatFileSize, formatDate,
-}) => {
-  // Refs
+const ChatSearchBox = () => {
+  // State variables from AnalysisPage.jsx
+  const [fileId, setFileId] = useState(null);
+  const [sessionId, setSessionId] = useState(`session-${Date.now()}`); // Initialize with a new session ID
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [processingStatus, setProcessingStatus] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isGeneratingInsights, setIsGeneratingInsights] = useState(false);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
+  const [activeDropdown, setActiveDropdown] = useState('Summary');
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [secrets, setSecrets] = useState([]);
+  const [isLoadingSecrets, setIsLoadingSecrets] = useState(false);
+  const [selectedSecretId, setSelectedSecretId] = useState(null);
+  const [isSecretPromptSelected, setIsSecretPromptSelected] = useState(false);
+  const [chatInput, setChatInput] = useState('');
+  const [documentData, setDocumentData] = useState(null);
+  const [batchUploads, setBatchUploads] = useState([]);
+  const [messages, setMessages] = useState([]); // Required for chatWithAI/chatWithDocument
+
+  // Refs from AnalysisPage.jsx
   const fileInputRef = useRef(null);
   const dropdownRef = useRef(null);
 
-  // Handle file upload
-  const handleFileUpload = async (event) => {
-    const files = Array.from(event.target.files);
-    if (files.length === 0) return;
+  // API Configuration
+  const API_BASE_URL = 'http://localhost:5000';
 
-    const allowedTypes = [
-      'application/pdf',
-      'application/msword',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'text/plain'
+  // Get auth token with comprehensive fallback options
+  const getAuthToken = () => {
+    const tokenKeys = [
+      'authToken', 'token', 'accessToken', 'jwt', 'bearerToken',
+      'auth_token', 'access_token', 'api_token', 'userToken'
     ];
 
-    const maxSize = 100 * 1024 * 1024; // 100MB
-
-    const validFiles = files.filter(file => {
-      if (!allowedTypes.includes(file.type)) {
-        setError(`File "${file.name}" has an unsupported type. Please upload PDF, DOC, DOCX, or TXT.`);
-        return false;
+    for (const key of tokenKeys) {
+      const token = localStorage.getItem(key);
+      if (token) {
+        return token;
       }
-      if (file.size > maxSize) {
-        setError(`File "${file.name}" is too large (max 100MB).`);
-        return false;
-      }
-      return true;
-    });
-
-    if (validFiles.length === 0) {
-      event.target.value = '';
-      return;
     }
+    return null;
+  };
 
+  // API request helper
+  const apiRequest = async (url, options = {}) => {
     try {
-      if (validFiles.length === 1) {
-        await uploadDocument(validFiles[0]);
-      } else {
-        await batchUploadDocuments(validFiles);
-      }
-    } catch (error) {
-      // Error already handled by uploadDocument or batchUploadDocuments
-    }
+      const token = getAuthToken();
+      const defaultHeaders = {
+        'Content-Type': 'application/json',
+      };
 
-    event.target.value = '';
+      if (token) {
+        defaultHeaders['Authorization'] = `Bearer ${token}`;
+      }
+
+      const headers = options.body instanceof FormData
+        ? (token ? { 'Authorization': `Bearer ${token}` } : {})
+        : { ...defaultHeaders, ...options.headers };
+
+      const response = await fetch(`${API_BASE_URL}${url}`, {
+        ...options,
+        headers,
+      });
+
+      if (!response.ok) {
+        let errorData;
+        try {
+          errorData = await response.json();
+        } catch {
+          errorData = { error: `HTTP error! status: ${response.status}` };
+        }
+
+        switch (response.status) {
+          case 401:
+            throw new Error('Authentication required. Please log in again.');
+          case 403:
+            throw new Error('Access denied.');
+          case 404:
+            throw new Error('Resource not found.');
+          case 413:
+            throw new Error('File too large.');
+          case 415:
+            throw new Error('Unsupported file type.');
+          case 429:
+            throw new Error('Too many requests.');
+          default:
+            throw new Error(errorData.error || errorData.message || `Request failed with status ${response.status}`);
+        }
+      }
+
+      const contentType = response.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        return await response.json();
+      }
+      return response;
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  // Function to fetch secrets list
+  const fetchSecrets = async () => {
+    try {
+      setIsLoadingSecrets(true);
+      setError(null);
+
+      const token = getAuthToken();
+      const headers = {
+        'Content-Type': 'application/json',
+      };
+
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const response = await fetch(`${API_BASE_URL}/files/secrets?fetch=true`, {
+        method: 'GET',
+        headers,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch secrets: ${response.status}`);
+      }
+
+      const secretsData = await response.json();
+
+      setSecrets(secretsData || []);
+
+      if (secretsData && secretsData.length > 0) {
+        setActiveDropdown(secretsData[0].name);
+        setSelectedSecretId(secretsData[0].id);
+      }
+
+    } catch (error) {
+      console.error('Error fetching secrets:', error);
+      setError(`Failed to load analysis prompts: ${error.message}`);
+    } finally {
+      setIsLoadingSecrets(false);
+    }
+  };
+
+  // Function to fetch secret value by ID
+  const fetchSecretValue = async (secretId) => {
+    try {
+      const existingSecret = secrets.find(secret => secret.id === secretId);
+      if (existingSecret && existingSecret.value) {
+        return existingSecret.value;
+      }
+
+      const token = getAuthToken();
+      const headers = {
+        'Content-Type': 'application/json',
+      };
+
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const response = await fetch(`${API_BASE_URL}/files/secrets/${secretId}`, {
+        method: 'GET',
+        headers,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch secret value: ${response.status}`);
+      }
+
+      const secretData = await response.json();
+      const promptValue = secretData.value || secretData.prompt || secretData.content || secretData;
+
+      setSecrets(prevSecrets =>
+        prevSecrets.map(secret =>
+          secret.id === secretId
+            ? { ...secret, value: promptValue }
+            : secret
+        )
+      );
+
+      return promptValue || '';
+    } catch (error) {
+      console.error('Error fetching secret value:', error);
+      throw new Error('Failed to retrieve analysis prompt');
+    }
   };
 
   // File upload with progress tracking (for single file)
@@ -276,6 +390,52 @@ const ChatSearchBox = ({
     }
   };
 
+  // Processing status polling
+  const getProcessingStatus = async (file_id) => {
+    try {
+      const data = await ApiService.getFileStatus(file_id);
+      setProcessingStatus(data);
+
+      if (data.status === 'processed') {
+        setDocumentData(prev => ({
+          ...prev,
+          status: 'processed',
+          content: prev?.content || 'Document processed successfully.'
+        }));
+      } else if (data.status === 'error') {
+        setError('Document processing failed.');
+      }
+
+      return data;
+    } catch (error) {
+      return null;
+    }
+  };
+
+  const startProcessingStatusPolling = (file_id) => {
+    let pollCount = 0;
+    const maxPolls = 150;
+
+    const pollInterval = setInterval(async () => {
+      pollCount++;
+      const status = await getProcessingStatus(file_id);
+
+      if (status && (status.status === 'processed' || status.status === 'error')) {
+        clearInterval(pollInterval);
+        if (status.status === 'processed') {
+          setSuccess('Document processing completed!');
+        } else {
+          setError('Document processing failed.');
+        }
+      } else if (pollCount >= maxPolls) {
+        clearInterval(pollInterval);
+        setError('Document processing timeout.');
+      }
+    }, 2000);
+
+    return pollInterval;
+  };
+
   // Chat with AI using custom prompt from secrets
   const chatWithAI = async (file_id, secretId, currentSessionId) => {
     try {
@@ -333,7 +493,6 @@ const ChatSearchBox = ({
       setSessionId(newSessionId);
 
       setSuccess('Analysis completed!');
-      animateResponse(response); // Animate response in parent
 
       return data;
     } catch (error) {
@@ -385,7 +544,6 @@ const ChatSearchBox = ({
       setChatInput('');
 
       setSuccess('Question answered!');
-      animateResponse(response); // Animate response in parent
 
       return data;
     } catch (error) {
@@ -394,6 +552,50 @@ const ChatSearchBox = ({
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Handle file upload
+  const handleFileUpload = async (event) => {
+    const files = Array.from(event.target.files);
+    if (files.length === 0) return;
+
+    const allowedTypes = [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'text/plain'
+    ];
+
+    const maxSize = 100 * 1024 * 1024; // 100MB
+
+    const validFiles = files.filter(file => {
+      if (!allowedTypes.includes(file.type)) {
+        setError(`File "${file.name}" has an unsupported type. Please upload PDF, DOC, DOCX, or TXT.`);
+        return false;
+      }
+      if (file.size > maxSize) {
+        setError(`File "${file.name}" is too large (max 100MB).`);
+        return false;
+      }
+      return true;
+    });
+
+    if (validFiles.length === 0) {
+      event.target.value = '';
+      return;
+    }
+
+    try {
+      if (validFiles.length === 1) {
+        await uploadDocument(validFiles[0]);
+      } else {
+        await batchUploadDocuments(validFiles);
+      }
+    } catch (error) {
+      // Error already handled by uploadDocument or batchUploadDocuments
+    }
+
+    event.target.value = '';
   };
 
   // Handle dropdown selection
@@ -448,6 +650,23 @@ const ChatSearchBox = ({
     }
   };
 
+  // Utility functions
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const formatDate = (dateString) => {
+    try {
+      return new Date(dateString).toLocaleString();
+    } catch (e) {
+      return 'Invalid date';
+    }
+  };
+
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -465,13 +684,108 @@ const ChatSearchBox = ({
   // Load secrets on component mount
   useEffect(() => {
     fetchSecrets();
-  }, [fetchSecrets]); // Dependency array includes fetchSecrets
+  }, []);
+
+  // Clear success messages after 5 seconds
+  useEffect(() => {
+    if (success) {
+      const timer = setTimeout(() => setSuccess(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [success]);
+
+  // Clear error messages after 8 seconds
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => setError(null), 8000);
+      return () => clearTimeout(timer);
+    }
+  }, [error]);
 
   return (
     <div className="w-full max-w-4xl mx-auto">
-      {/* Input Area */}
+      {/* Error Messages */}
+      {error && (
+        <div className="fixed top-4 right-4 z-50 max-w-sm">
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg shadow-lg flex items-start space-x-2">
+            <AlertCircle className="h-5 w-5 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-sm">{error}</p>
+            </div>
+            <button
+              onClick={() => setError(null)}
+              className="text-red-500 hover:text-red-700"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Success Messages */}
+      {success && (
+        <div className="fixed top-4 right-4 z-50 max-w-sm">
+          <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg shadow-lg flex items-center space-x-2">
+            <CheckCircle className="h-5 w-5 flex-shrink-0" />
+            <span className="text-sm">{success}</span>
+            <button
+              onClick={() => setSuccess(null)}
+              className="ml-auto text-green-500 hover:text-green-700"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Progress Modal */}
+      {isUploading && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <div className="text-center">
+              <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-blue-600" />
+              <h3 className="text-lg font-semibold mb-4 text-gray-900">Uploading Document(s)</h3>
+              {batchUploads.length > 0 ? (
+                <div className="space-y-4">
+                  {batchUploads.map((upload) => (
+                    <div key={upload.id} className="text-left">
+                      <p className="text-sm font-medium text-gray-800 truncate mb-1">{upload.file.name}</p>
+                      <div className="w-full bg-gray-200 rounded-full h-2 mb-1">
+                        <div
+                          className={`h-2 rounded-full transition-all duration-300 ${
+                            upload.status === 'uploaded' ? 'bg-green-500' :
+                            upload.status === 'failed' ? 'bg-red-500' : 'bg-blue-600'
+                          }`}
+                          style={{ width: `${upload.progress}%` }}
+                        ></div>
+                      </div>
+                      <p className="text-xs text-gray-600">
+                        {upload.status === 'uploaded' ? 'Completed' :
+                        upload.status === 'failed' ? `Failed: ${upload.error}` :
+                        `${upload.progress}% complete`}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
+                  <div
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${uploadProgress}%` }}
+                  ></div>
+                </div>
+              )}
+              {batchUploads.length === 0 && (
+                <p className="text-sm text-gray-600">{uploadProgress}% complete</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Input Area - Fixed at bottom (from AnalysisPage.jsx split view) */}
       <form onSubmit={handleSend} className="mx-auto">
-        <div className="flex items-center space-x-3 bg-gray-50 rounded-xl border border-gray-200 px-4 py-3 focus-within:border-blue-300 focus-within:bg-white focus-within:shadow-sm">
+        <div className="flex items-center space-x-3 bg-gray-50 rounded-xl border border-gray-200 px-4 py-4 focus-within:border-blue-300 focus-within:bg-white focus-within:shadow-sm">
           {/* Upload Button */}
           <button
             type="button"
@@ -503,7 +817,7 @@ const ChatSearchBox = ({
               type="button"
               onClick={() => setShowDropdown(!showDropdown)}
               disabled={!fileId || processingStatus?.status !== 'processed' || isLoading || isGeneratingInsights || isLoadingSecrets}
-              className="flex items-center space-x-2 px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center space-x-3.5 px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <BookOpen className="h-3.5 w-3.5" />
               <span>{isLoadingSecrets ? 'Loading...' : activeDropdown}</span>
@@ -511,7 +825,7 @@ const ChatSearchBox = ({
             </button>
 
             {showDropdown && !isLoadingSecrets && (
-              <div className="absolute bottom-full left-0 mb-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-20 max-h-60 overflow-y-auto">
+              <div className="absolute top-full left-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-20 max-h-60 overflow-y-auto">
                 {secrets.length > 0 ? (
                   secrets.map((secret) => (
                     <button
