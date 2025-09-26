@@ -145,19 +145,11 @@ const PublicLayout: React.FC<PublicLayoutProps> = ({ children, hideHeaderAndFoot
                   whileTap={{ scale: 0.95 }}
                 >
                   <Link to="/" className="flex items-center group">
-                    <motion.div 
-                      className="w-10 h-10 bg-gradient-to-br from-gray-600 to-gray-700 rounded-lg flex items-center justify-center mr-3 shadow-lg group-hover:shadow-gray-600/50 transition-all duration-300"
-                      whileHover={{ rotate: [0, -10, 10, 0] }}
-                      transition={{ duration: 0.5 }}
-                    >
-                      <Shield className="w-6 h-6 text-white" />
-                    </motion.div>
-                    <motion.h1 
-                      className="text-white text-xl md:text-2xl font-bold bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent"
-                      whileHover={{ scale: 1.02 }}
-                    >
-                      Nexintel AI
-                    </motion.h1>
+                    <img
+                      src="/nexintel.jpg" // Assuming the logo is in the public folder
+                      alt="Nexintel AI Logo"
+                      className="h-10 w-auto mr-3" // Adjust height as needed, w-auto for responsive width
+                    />
                   </Link>
                 </motion.div>
 
@@ -331,14 +323,12 @@ const PublicLayout: React.FC<PublicLayoutProps> = ({ children, hideHeaderAndFoot
                     className="flex items-center mb-6"
                     whileHover={{ scale: 1.05 }}
                   >
-                    <motion.div 
-                      className="w-10 h-10 bg-gradient-to-br from-gray-600 to-gray-700 rounded-lg flex items-center justify-center mr-3 shadow-lg"
-                      whileHover={{ rotate: [0, -10, 10, 0] }}
-                      transition={{ duration: 0.5 }}
-                    >
-                      <Shield className="w-6 h-6 text-white" />
-                    </motion.div>
-                    <span className="text-xl font-bold text-white">Nexintel AI</span>
+                    <img
+                      src="/nexintel.jpg" // Assuming the logo is in the public folder
+                      alt="Nexintel AI Logo"
+                      className="h-10 w-auto mr-3" // Adjust height as needed, w-auto for responsive width
+                    />
+                    <span className="text-xl font-bold text-white"></span>
                   </motion.div>
                   
                   <p className="text-sm font-medium text-center md:text-left mb-4">

@@ -475,7 +475,7 @@ class ApiService {
   }
 
   async getDraftingTemplates() {
-    return this.request("http://localhost:5000/drafting");
+    return this.request("/drafting");
   }
 
   // ========================
